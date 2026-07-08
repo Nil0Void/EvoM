@@ -1,40 +1,28 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
+local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
+
+-- UI Parent Protection Fallback
+local ParentUI = gethui and gethui() or LocalPlayer:WaitForChild("PlayerGui")
 
 -- ============================================================
 -- CONFIGURATION
 -- ============================================================
-
 local Config = {
-    -- Enable auto-battle on battle start
     Enabled = true,
-    -- Delay before enabling auto-battle (seconds)
     StartDelay = 1.0,
-    -- Auto-battle mode: true = full auto, false = semi-auto
     FullAuto = true,
-    -- Also auto-enable for wild encounters
     WildEncounters = true,
-    -- Also auto-enable for trainer battles
     TrainerBattles = true,
-    -- Also auto-enable for NPC battles
     NpcBattles = true,
-    -- Also auto-enable for boss battles
     BossBattles = false,
-    -- Also auto-enable for dungeon encounters
     DungeonEncounters = true,
-    -- Also auto-enable for PvP (if applicable)
     PvP = false,
-    -- Auto-select first available skill when in full auto mode
     AutoSelectSkill = false,
-    -- Auto-switch pet when current pet faints
     AutoSwitch = true,
-    -- Auto-use catch ball in wild encounters (if available)
     AutoCatch = false,
-    -- Delay between auto-actions (seconds)
     ActionDelay = 0.5,
-    -- Battle speed multiplier (1=normal, 2=fast, 5=very fast, 10=ultra)
     BattleSpeedMult = 10,
 }
 
@@ -42,41 +30,20 @@ local isActive = false
 local currentBattleType = nil
 
 -- ============================================================
--- GET REMOTES
+-- GET REMOTES & SERVICES
 -- ============================================================
-
 local Remote = ReplicatedStorage:FindFirstChild("Remote")
-if not Remote then
-    return
-end
+local BattleRemote = Remote and Remote:FindFirstChild("Battle")
 
-local BattleRemote = Remote:FindFirstChild("Battle")
-if not BattleRemote then
-    return
-end
-
-local ReqAutoBattle = BattleRemote:FindFirstChild("ReqAutoBattle")
-local ReqOperateBattle = BattleRemote:FindFirstChild("ReqOperateBattle")
-local ReqEnterPetBattle = BattleRemote:FindFirstChild("ReqEnterPetBattle")
-local ReqEnterNpcBattle = BattleRemote:FindFirstChild("ReqEnterNpcBattle")
-local ReqCanEnterBattle = BattleRemote:FindFirstChild("ReqCanEnterBattle")
-
--- ============================================================
--- GET BINDABLES
--- ============================================================
+local ReqAutoBattle = BattleRemote and BattleRemote:FindFirstChild("ReqAutoBattle")
+local ReqOperateBattle = BattleRemote and BattleRemote:FindFirstChild("ReqOperateBattle")
 
 local Bindable = ReplicatedStorage:FindFirstChild("Bindable")
 local BattleBindable = Bindable and Bindable:FindFirstChild("Battle")
-
 local ClientBattleStart = BattleBindable and BattleBindable:FindFirstChild("ClientBattleStart")
-local ClientBattleAnimationComplete = BattleBindable and BattleBindable:FindFirstChild("ClientBattleAnimationComplete")
 
--- ============================================================
--- GET SERVICES
--- ============================================================
-
-local Script = ReplicatedStorage:FindFirstChild("Script")
-local BattleScript = Script and Script:FindFirstChild("Battle")
+local ScriptFolder = ReplicatedStorage:FindFirstChild("Script")
+local BattleScript = ScriptFolder and ScriptFolder:FindFirstChild("Battle")
 local BattleService = nil
 
 if BattleScript then
@@ -86,24 +53,14 @@ if BattleScript then
 end
 
 -- ============================================================
--- UTILITY FUNCTIONS
+-- CORE LOGIC FUNCTIONS
 -- ============================================================
-
 local function isBattleTypeEnabled(battleType)
-    if battleType == 1 then  -- PVE_PET (wild encounter)
-        return Config.WildEncounters
-    elseif battleType == 4 then  -- PVE_NPC (trainer battle)
-        return Config.TrainerBattles
-    elseif battleType == 3 then  -- PVE_BOSS
-        return Config.BossBattles
-    elseif battleType == 6 then  -- PVE_DUNGEON
-        return Config.DungeonEncounters
-    elseif battleType == 5 then  -- PVP
-        return Config.PvP
-    elseif battleType == 7 then  -- GUIDER
-        return true
-    elseif battleType == 8 then  -- SUMMON_MONSTER
-        return true
+    if battleType == 1 then return Config.WildEncounters
+    elseif battleType == 4 then return Config.TrainerBattles
+    elseif battleType == 3 then return Config.BossBattles
+    elseif battleType == 6 then return Config.DungeonEncounters
+    elseif battleType == 5 then return Config.PvP
     end
     return true
 end
@@ -111,54 +68,32 @@ end
 local function getBattleType()
     if not BattleService then return nil end
     local battle = BattleService.getCurrentBattle()
-    if battle and type(battle) == "table" then
-        return battle.type
-    end
-    return nil
+    return (battle and type(battle) == "table") and battle.type or nil
 end
 
 local function enableAutoBattle()
-    if not ReqAutoBattle then
-        return false
-    end
-    
-    local success, result = pcall(function()
-        return ReqAutoBattle:InvokeServer(Config.FullAuto)
+    if not ReqAutoBattle then return false end
+    local success = pcall(function()
+        ReqAutoBattle:InvokeServer(Config.FullAuto)
     end)
-    
     if success then
         isActive = true
         return true
-    else
-        return false
     end
+    return false
 end
 
 local function disableAutoBattle()
     if not ReqAutoBattle then return end
-    
-    pcall(function()
-        ReqAutoBattle:InvokeServer(false)
-    end)
-    
+    pcall(function() ReqAutoBattle:InvokeServer(false) end)
     isActive = false
-    print("[AutoBattle] Auto-battle disabled")
 end
-
--- ============================================================
--- BATTLE MONITOR
--- ============================================================
 
 local function onBattleStart()
     if not Config.Enabled then return end
-    
     local battleType = getBattleType()
     currentBattleType = battleType
-    
-    if not isBattleTypeEnabled(battleType) then
-        return
-    end
-    
+    if not isBattleTypeEnabled(battleType) then return end
     task.delay(Config.StartDelay, function()
         enableAutoBattle()
     end)
@@ -169,182 +104,207 @@ local function onBattleEnd()
     currentBattleType = nil
 end
 
--- ============================================================
--- HOOK INTO BATTLE EVENTS
--- ============================================================
-
-if ClientBattleStart then
-    ClientBattleStart.Event:Connect(onBattleStart)
-end
-
--- Monitor for battle end via ResSettleBattle
-if BattleRemote:FindFirstChild("ResSettleBattle") then
+-- Hook Events
+if ClientBattleStart then ClientBattleStart.Event:Connect(onBattleStart) end
+if BattleRemote and BattleRemote:FindFirstChild("ResSettleBattle") then
     BattleRemote.ResSettleBattle.OnClientEvent:Connect(function()
         task.wait(0.5)
         onBattleEnd()
     end)
 end
-
--- Also monitor ResEnterBattleFail
-if BattleRemote:FindFirstChild("ResEnterBattleFail") then
-    BattleRemote.ResEnterBattleFail.OnClientEvent:Connect(function()
-        onBattleEnd()
-    end)
+if BattleRemote and BattleRemote:FindFirstChild("ResEnterBattleFail") then
+    BattleRemote.ResEnterBattleFail.OnClientEvent:Connect(onBattleEnd)
 end
 
--- ============================================================
--- AUTO-ACTION LOOP (for games that need manual input)
--- ============================================================
-
+-- Auto Action Loop
 task.spawn(function()
     while true do
         task.wait(Config.ActionDelay)
-        
-        if not isActive or not Config.Enabled then continue end
-        
-        if not Config.FullAuto and ReqOperateBattle then
-            -- Semi-auto mode: need to send actions manually
-            -- This is a fallback for when ReqAutoBattle doesn't fully work
+        if isActive and Config.Enabled and not Config.FullAuto and ReqOperateBattle then
             pcall(function()
-                -- Send a basic attack action
-                local actionData = {
-                    actionType = 1,  -- SKILL
-                    skillId = 0,     -- First skill
-                    targetCampId = 2,  -- Enemy camp
-                    targetPos = 1,   -- First enemy position
-                }
-                ReqOperateBattle:InvokeServer(actionData)
+                ReqOperateBattle:InvokeServer({
+                    actionType = 1,
+                    skillId = 0,
+                    targetCampId = 2,
+                    targetPos = 1,
+                })
             end)
         end
     end
 end)
 
--- ============================================================
--- TOGGLE FUNCTIONS
--- ============================================================
-
-function ToggleAutoBattle()
-    Config.Enabled = not Config.Enabled
-    
-    if not Config.Enabled and isActive then
-        disableAutoBattle()
-    end
-end
-
-function SetAutoBattleMode(fullAuto)
-    Config.FullAuto = fullAuto
-    
-    if isActive then
-        enableAutoBattle()
-    end
-end
-
-function SetBattleSpeed(delay)
-    Config.ActionDelay = delay
-end
-
--- ============================================================
--- BATTLE SPEED HACK (BattleChoreoConst + SkillPerformanceCfg)
--- ============================================================
-
-task.spawn(function()
-    -----------------------
-    -- Part 1: BattleChoreoConst
-    -----------------------
-    local ScriptFolder = ReplicatedStorage:FindFirstChild("Script", 15)
-    if not ScriptFolder then
-        return
-    end
-    
-    local BattleChoreo = ScriptFolder:FindFirstChild("BattleChoreo", 15)
-    if not BattleChoreo then
-        return
-    end
-    
-    local Basic = BattleChoreo:FindFirstChild("Basic", 15)
-    if not Basic then
-        return
-    end
-    
-    local ChoreoConstModule = Basic:FindFirstChild("BattleChoreoConst", 15)
-    if not ChoreoConstModule then
-        return
-    end
-    
-    local success, CC = pcall(require, ChoreoConstModule)
-    
-    if success and type(CC) == "table" then
-        local mult = Config.BattleSpeedMult
+-- Speed Hack Optimization Function
+local function ApplySpeedHack()
+    task.spawn(function()
+        local BattleChoreo = ScriptFolder:FindFirstChild("BattleChoreo")
+        local Basic = BattleChoreo and BattleChoreo:FindFirstChild("Basic")
+        local ChoreoConstModule = Basic and Basic:FindFirstChild("BattleChoreoConst")
         
-        -- Scalar wait times
-        if type(CC.DefaultActionWaitTime) == "number" then
-            CC.DefaultActionWaitTime = CC.DefaultActionWaitTime / mult
-        end
-        if type(CC.SettleNodeWaitTime) == "number" then
-            CC.SettleNodeWaitTime = CC.SettleNodeWaitTime / mult
-        end
-        if type(CC.StartBattleBeforeChoreographyDelayTime) == "number" then
-            CC.StartBattleBeforeChoreographyDelayTime = CC.StartBattleBeforeChoreographyDelayTime / mult
-        end
-        if type(CC.FirstRoundEmptyActionResultsAnimationCompleteDelay) == "number" then
-            CC.FirstRoundEmptyActionResultsAnimationCompleteDelay = 0.05
-        end
-        if type(CC.ForceSwitchAnimationCompleteDelay) == "number" then
-            CC.ForceSwitchAnimationCompleteDelay = 0.05
-        end
-        if type(CC.OpeningThrowBallPreDelay) == "number" then
-            CC.OpeningThrowBallPreDelay = 0.01
-        end
-        if type(CC.OpeningThrowBallPostDelay) == "number" then
-            CC.OpeningThrowBallPostDelay = 0.01
-        end
-        
-        -- Table wait times
-        if type(CC.ActionWaitTimeByType) == "table" then
-            for k, v in pairs(CC.ActionWaitTimeByType) do
-                if type(v) == "number" then
-                    CC.ActionWaitTimeByType[k] = v / mult
+        if ChoreoConstModule then
+            local success, CC = pcall(require, ChoreoConstModule)
+            if success and type(CC) == "table" then
+                local mult = Config.BattleSpeedMult
+                if type(CC.DefaultActionWaitTime) == "number" then CC.DefaultActionWaitTime = CC.DefaultActionWaitTime / mult end
+                if type(CC.SettleNodeWaitTime) == "number" then CC.SettleNodeWaitTime = CC.SettleNodeWaitTime / mult end
+                if type(CC.ActionWaitTimeByType) == "table" then
+                    for k, v in pairs(CC.ActionWaitTimeByType) do if type(v) == "number" then CC.ActionWaitTimeByType[k] = v / mult end end
                 end
             end
         end
-        if type(CC.SettleNodeWaitTimeByType) == "table" then
-            for k, v in pairs(CC.SettleNodeWaitTimeByType) do
-                if type(v) == "number" then
-                    CC.SettleNodeWaitTimeByType[k] = v / mult
+
+        local Pet = ScriptFolder:FindFirstChild("Pet")
+        local Cfg = Pet and Pet:FindFirstChild("Cfg")
+        local SkillCfgModule = Cfg and Cfg:FindFirstChild("SkillPerformanceCfg")
+        
+        if SkillCfgModule then
+            local success2, SC = pcall(require, SkillCfgModule)
+            if success2 and type(SC) == "table" then
+                local mult = Config.BattleSpeedMult
+                for _, data in pairs(SC) do
+                    if type(data) == "table" and type(data.finishWaitTime) == "number" then
+                        data.finishWaitTime = math.max(50, math.floor(data.finishWaitTime / mult))
+                    end
                 end
             end
         end
-    end
-    
-    -----------------------
-    -- Part 2: SkillPerformanceCfg
-    -----------------------
-    local Pet = ScriptFolder:FindFirstChild("Pet", 15)
-    if not Pet then
-        return
-    end
-    
-    local Cfg = Pet:FindFirstChild("Cfg", 15)
-    if not Cfg then
-        return
-    end
-    
-    local SkillCfgModule = Cfg:FindFirstChild("SkillPerformanceCfg", 15)
-    if not SkillCfgModule then
-        return
-    end
-    
-    local success2, SC = pcall(require, SkillCfgModule)
-    
-    if success2 and type(SC) == "table" then
-        local mult = Config.BattleSpeedMult
-        local count = 0
+    end)
+end
+ApplySpeedHack()
+
+-- ============================================================
+-- GUI CREATION (MOBILE FRIENDLY & NO LAGG)
+-- ============================================================
+
+-- Clean old instances to prevent UI stacking/lag
+if ParentUI:FindFirstChild("AutoBattleGui") then ParentUI.AutoBattleGui:Destroy() end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "AutoBattleGui"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = ParentUI
+
+-- Mobile Floating Toggle Button
+local MenuToggle = Instance.new("TextButton")
+MenuToggle.Name = "MenuToggle"
+MenuToggle.Size = UDim2.new(0, 60, 0, 60)
+MenuToggle.Position = UDim2.new(0, 15, 0.4, 0)
+MenuToggle.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+MenuToggle.Text = "⚔️"
+MenuToggle.TextSize = 25
+MenuToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+MenuToggle.Parent = ScreenGui
+
+local MTCorner = Instance.new("UICorner")
+MTCorner.CornerRadius = UDim.new(0, 30)
+MTCorner.Parent = MenuToggle
+
+-- Main Frame
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 340, 0, 400)
+MainFrame.Position = UDim2.new(0.5, -170, 0.5, -200)
+MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+MainFrame.Visible = false
+MainFrame.Active = true
+MainFrame.Draggable = true -- Backward compatible drag fallback
+MainFrame.Parent = ScreenGui
+
+local MFCorner = Instance.new("UICorner")
+MFCorner.CornerRadius = UDim.new(0, 12)
+MFCorner.Parent = MainFrame
+
+-- Title
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 45)
+Title.BackgroundTransparency = 1
+Title.Text = "AUTO-BATTLE CONTROL Panel"
+Title.TextColor3 = Color3.fromRGB(240, 240, 240)
+Title.TextSize = 16
+Title.Font = Enum.Font.GothamBold
+Title.Parent = MainFrame
+
+-- Container for Options (ScrollingFrame prevents layout breaks on small mobile screens)
+local Container = Instance.new("ScrollingFrame")
+Container.Size = UDim2.new(1, -20, 1, -60)
+Container.Position = UDim2.new(0, 10, 0, 50)
+Container.BackgroundTransparency = 1
+Container.CanvasSize = UDim2.new(0, 0, 0, 450)
+Container.ScrollBarThickness = 4
+Container.Parent = MainFrame
+
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout.Padding = UDim.new(0, 8)
+UIListLayout.Parent = Container
+
+-- Helper function to create streamlined UI toggles
+local function CreateToggle(name, configKey, parentObj)
+    local Button = Instance.new("TextButton")
+    Button.Size = UDim2.new(1, -10, 0, 40)
+    Button.BackgroundColor3 = Config[configKey] and Color3.fromRGB(46, 117, 89) or Color3.fromRGB(45, 45, 50)
+    Button.Text = "  " .. name .. ": " .. (Config[configKey] and "ON" or "OFF")
+    Button.Font = Enum.Font.GothamSemibold
+    Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Button.TextSize = 14
+    Button.TextXAlignment = Enum.TextXAlignment.Left
+    Button.Parent = parentObj
+
+    local UICorner = Instance.new("UICorner")
+    UICorner.CornerRadius = UDim.new(0, 6)
+    UICorner.Parent = Button
+
+    Button.Activated:Connect(function()
+        Config[configKey] = not Config[configKey]
+        Button.BackgroundColor3 = Config[configKey] and Color3.fromRGB(46, 117, 89) or Color3.fromRGB(45, 45, 50)
+        Button.Text = "  " .. name .. ": " .. (Config[configKey] and "ON" or "OFF")
         
-        for skillId, data in pairs(SC) do
-            if type(data) == "table" and type(data.finishWaitTime) == "number" then
-                data.finishWaitTime = math.max(50, math.floor(data.finishWaitTime / mult))
-                count = count + 1
-            end
+        -- Dynamic updates
+        if configKey == "Enabled" and not Config.Enabled and isActive then
+            disableAutoBattle()
+        elseif configKey == "FullAuto" and isActive then
+            enableAutoBattle()
         end
-    end
+    end)
+end
+
+-- Create Menu Buttons
+CreateToggle("Master Switch", "Enabled", Container)
+CreateToggle("Full Auto Mode", "FullAuto", Container)
+CreateToggle("Wild Encounters", "WildEncounters", Container)
+CreateToggle("Trainer Battles", "TrainerBattles", Container)
+CreateToggle("NPC Battles", "NpcBattles", Container)
+CreateToggle("Boss Battles", "BossBattles", Container)
+CreateToggle("Dungeon Encounters", "DungeonEncounters", Container)
+
+-- Speed Changer Button Component
+local SpeedButton = Instance.new("TextButton")
+SpeedButton.Size = UDim2.new(1, -10, 0, 40)
+SpeedButton.BackgroundColor3 = Color3.fromRGB(60, 55, 85)
+SpeedButton.Text = "  Battle Speed: " .. Config.BattleSpeedMult .. "x"
+SpeedButton.Font = Enum.Font.GothamSemibold
+SpeedButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+SpeedButton.TextSize = 14
+SpeedButton.TextXAlignment = Enum.TextXAlignment.Left
+SpeedButton.Parent = Container
+
+local SBCorner = Instance.new("UICorner")
+SBCorner.CornerRadius = UDim.new(0, 6)
+SBCorner.Parent = SpeedButton
+
+local speeds = {1, 2, 5, 10}
+local currentSpeedIdx = 4
+SpeedButton.Activated:Connect(function()
+    currentSpeedIdx = currentSpeedIdx % #speeds + 1
+    Config.BattleSpeedMult = speeds[currentSpeedIdx]
+    SpeedButton.Text = "  Battle Speed: " .. Config.BattleSpeedMult .. "x"
+    ApplySpeedHack()
+end)
+
+-- Main Toggle Open/Close Handler
+MenuToggle.Activated:Connect(function()
+    MainFrame.Visible = not MainFrame.Visible
+    TweenService:Create(MenuToggle, TweenInfo.new(0.2), {
+        BackgroundColor3 = MainFrame.Visible and Color3.fromRGB(180, 50, 50) or Color3.fromRGB(35, 35, 40)
+    }):Play()
 end)
